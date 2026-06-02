@@ -26,7 +26,7 @@ def prepare_supervised_data(df, n_lags=4):
     df_feat = df_feat.dropna()
     
     # Define feature space (Lags + Exogenous Marketing Spend)
-    feature_cols = [f'target_lag_{lag}' for lag in range(1, n_lags + 1)] + ['log_exog']
+    feature_cols = [f'target_lag_{lag}' for lag in range(1, n_lags + 1)] + ['log_exog', 'outlier_flag', 'fourier_sin_1', 'fourier_cos_1']
     
     X = df_feat[feature_cols].values
     y = df_feat['log_target'].values
@@ -97,11 +97,14 @@ def main():
     current_window = list(y_train[-n_lags:])
     
     for i in range(horizon):
-        # Extract the exogenous marketing spend for the current test step
-        current_exog = X_test[i, -1] 
-        
-        # Construct the current feature vector: [lag_4, lag_3, lag_2, lag_1, exog]
-        input_features = np.array(current_window + [current_exog]).reshape(1, -1)
+        # Extract exogenous features for the current test step
+        current_exog = X_test[i, -4]          # log_exog
+        current_outlier = X_test[i, -3]       # outlier_flag
+        current_sin = X_test[i, -2]           # fourier_sin_1
+        current_cos = X_test[i, -1]           # fourier_cos_1
+
+        # Construct the current feature vector: [lags..., exog, outlier_flag, sin, cos]
+        input_features = np.array(current_window + [current_exog, current_outlier, current_sin, current_cos]).reshape(1, -1)
         
         # Predict next log value
         next_pred = best_model.predict(input_features)[0]
