@@ -1,7 +1,27 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import config
+
+def calculate_metrics(actual, predicted):
+    mae = np.mean(np.abs(actual - predicted))
+    rmse = np.sqrt(np.mean((actual - predicted) ** 2))
+    mape = np.mean(np.abs((actual - predicted) / actual)) * 100
+    return mae, rmse, mape
+
+def select_best_prediction(df, actual_col='Actual'):
+    prediction_cols = [col for col in df.columns if col != actual_col]
+    if not prediction_cols:
+        raise ValueError(f"No prediction columns found in dataframe. Columns: {list(df.columns)}")
+
+    actual = df[actual_col].values
+    scores = {
+        col: calculate_metrics(actual, df[col].values)
+        for col in prediction_cols
+    }
+    best_col = min(scores, key=lambda col: scores[col][2])
+    return best_col, df[best_col].values, scores[best_col]
 
 def diebold_mariano_test(actual, pred1, pred2, h=1):
     """
@@ -40,9 +60,9 @@ def main():
     
     # 1. Load predictions from saved files
     try:
-        sarimax_df = pd.read_csv("predictions_sarimax.csv", index_col=0)
-        xgboost_df = pd.read_csv("predictions_xgboost.csv", index_col=0)
-        lstm_df = pd.read_csv("predictions_lstm.csv", index_col=0)
+        sarimax_df = pd.read_csv("predictions_sarimax.csv", index_col=0, parse_dates=True)
+        xgboost_df = pd.read_csv("predictions_xgboost.csv", index_col=0, parse_dates=True)
+        lstm_df = pd.read_csv("predictions_lstm.csv", index_col=0, parse_dates=True)
     except FileNotFoundError:
         print("[Error] Please make sure you have run model_sarimax.py, model_xgboost.py, and model_lstm.py first!")
         return
@@ -53,25 +73,28 @@ def main():
     print("========================================================")
     
     # SARIMAX Metrics (Monthly Scale)
-    s_act, s_pred = sarimax_df['Actual'].values, sarimax_df['SARIMAX_Forecast'].values
-    print(f"Model 1: SARIMAX (Monthly Frequency | H = 12)")
-    print(f"  MAE:  {np.mean(np.abs(s_act - s_pred)):.2f}")
-    print(f"  RMSE: {np.sqrt(np.mean((s_act - s_pred)**2)):.2f}")
-    print(f"  MAPE: {np.mean(np.abs((s_act - s_pred)/s_act))*100:.2f}%")
+    s_act = sarimax_df['Actual'].values
+    sarimax_col, s_pred, (s_mae, s_rmse, s_mape) = select_best_prediction(sarimax_df)
+    print(f"Model 1: SARIMAX ({sarimax_col} | Monthly Frequency | H = 12)")
+    print(f"  MAE:  {s_mae:.2f}")
+    print(f"  RMSE: {s_rmse:.2f}")
+    print(f"  MAPE: {s_mape:.2f}%")
     
     # XGBoost Metrics (Weekly Scale)
-    x_act, x_pred = xgboost_df['Actual'].values, xgboost_df['XGBoost_Forecast'].values
-    print(f"\nModel 2: XGBoost + Optuna (Weekly Frequency | H = 52)")
-    print(f"  MAE:  {np.mean(np.abs(x_act - x_pred)):.2f}")
-    print(f"  RMSE: {np.sqrt(np.mean((x_act - x_pred)**2)):.2f}")
-    print(f"  MAPE: {np.mean(np.abs((x_act - x_pred)/x_act))*100:.2f}%")
+    x_act = xgboost_df['Actual'].values
+    xgboost_col, x_pred, (x_mae, x_rmse, x_mape) = select_best_prediction(xgboost_df)
+    print(f"\nModel 2: XGBoost + Optuna ({xgboost_col} | Weekly Frequency | H = 52)")
+    print(f"  MAE:  {x_mae:.2f}")
+    print(f"  RMSE: {x_rmse:.2f}")
+    print(f"  MAPE: {x_mape:.2f}%")
     
     # LSTM Metrics (Weekly Scale)
     l_act, l_pred = lstm_df['Actual'].values, lstm_df['LSTM_Forecast'].values
+    l_mae, l_rmse, l_mape = calculate_metrics(l_act, l_pred)
     print(f"\nModel 3: LSTM Neural Network (Weekly Frequency | H = 52)")
-    print(f"  MAE:  {np.mean(np.abs(l_act - l_pred)):.2f}")
-    print(f"  RMSE: {np.sqrt(np.mean((l_act - l_pred)**2)):.2f}")
-    print(f"  MAPE: {np.mean(np.abs((l_act - l_pred)/l_act))*100:.2f}%")
+    print(f"  MAE:  {l_mae:.2f}")
+    print(f"  RMSE: {l_rmse:.2f}")
+    print(f"  MAPE: {l_mape:.2f}%")
     print("========================================================")
 
     # 3. Perform Diebold-Mariano Test
@@ -93,14 +116,22 @@ def main():
         print("=> RESULT: Fail to reject H0. The difference in accuracy between XGBoost and LSTM is purely random.")
 
     # 4. Generate Final Comparative Plot for Weekly Models
+    plot_xgboost_df = xgboost_df.iloc[:-1]
+    plot_lstm_df = lstm_df.iloc[:-1]
+    plot_x_pred = x_pred[:-1]
+    plot_l_pred = l_pred[:-1]
+
     plt.figure(figsize=(12, 6))
-    plt.plot(xgboost_df.index, xgboost_df['Actual'], label="Actual Leads (CRM)", color="black", linewidth=2)
-    plt.plot(xgboost_df.index, xgboost_df['XGBoost_Forecast'], label=f"XGBoost (MAPE: {np.mean(np.abs((x_act - x_pred)/x_act))*100:.2f}%)", color="green", linestyle="--")
-    plt.plot(lstm_df.index, lstm_df['LSTM_Forecast'], label=f"LSTM (MAPE: {np.mean(np.abs((l_act - l_pred)/l_act))*100:.2f}%)", color="purple", linestyle=":")
+    plt.plot(plot_xgboost_df.index, plot_xgboost_df['Actual'], label="Actual Leads (CRM)", color="black", linewidth=2)
+    plt.plot(plot_xgboost_df.index, plot_x_pred, label=f"XGBoost {xgboost_col} (MAPE: {x_mape:.2f}%)", color="green", linestyle="--")
+    plt.plot(plot_lstm_df.index, plot_l_pred, label=f"LSTM (MAPE: {l_mape:.2f}%)", color="purple", linestyle=":")
     
     plt.title("Kodland Lead Volume Forecasting - Final Model Comparison (Weekly Test Set)")
     plt.xlabel("Timeline (Weeks)")
     plt.ylabel("Leads Count")
+    plt.gca().xaxis.set_major_locator(mdates.MonthLocator(interval=1))
+    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+    plt.xticks(rotation=45, ha="right")
     plt.legend()
     plt.grid(True, linestyle=":", alpha=0.6)
     plt.savefig("final_model_comparison.png", bbox_inches='tight')
